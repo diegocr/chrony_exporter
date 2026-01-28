@@ -168,7 +168,7 @@ func (e Exporter) trackingFormatName(logger *slog.Logger, tracking chrony.Tracki
 	return e.dnsLookup(logger, tracking.IPAddr)
 }
 
-func (e Exporter) getTrackingMetrics(logger *slog.Logger, ch chan<- prometheus.Metric, client chrony.Client) error {
+func (e Exporter) getTrackingMetrics(logger *slog.Logger, ch chan<- prometheus.Metric, client *chrony.Client) error {
 	packet, err := client.Communicate(chrony.NewTrackingPacket())
 	if err != nil {
 		return err
@@ -177,7 +177,7 @@ func (e Exporter) getTrackingMetrics(logger *slog.Logger, ch chan<- prometheus.M
 
 	tracking, ok := packet.(*chrony.ReplyTracking)
 	if !ok {
-		return fmt.Errorf("Got wrong 'tracking' response: %q", packet)
+		return fmt.Errorf("got wrong 'tracking' response: %q", packet)
 	}
 
 	ch <- trackingInfo.mustNewConstMetric(1.0, tracking.IPAddr.String(), e.trackingFormatName(logger, tracking.Tracking), chrony.RefidAsHEX(tracking.RefID))

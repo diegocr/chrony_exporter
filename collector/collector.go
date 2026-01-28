@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/facebook/time/ntp/chrony"
+	"github.com/google/uuid"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -55,6 +57,7 @@ type Exporter struct {
 	timeout time.Duration
 
 	collectSources     bool
+	collectNtpdata     bool
 	collectTracking    bool
 	collectServerstats bool
 	chmodSocket        bool
@@ -88,6 +91,8 @@ type ChronyCollectorConfig struct {
 
 	// CollectSources will configure the exporter to collect `chronyc sources`.
 	CollectSources bool
+	// CollectNtpData will configure the exporter to extend sources info with `chronyc ntpdata`
+	CollectNtpdata bool
 	// CollectTracking will configure the exporter to collect `chronyc tracking`.
 	CollectTracking bool
 	// CollectServerstats will configure the exporter to collect `chronyc serverstats`.
@@ -100,6 +105,7 @@ func NewExporter(conf ChronyCollectorConfig, logger *slog.Logger) Exporter {
 		timeout: conf.Timeout,
 
 		collectSources:     conf.CollectSources,
+		collectNtpdata:     conf.CollectNtpdata,
 		collectTracking:    conf.CollectTracking,
 		collectServerstats: conf.CollectServerstats,
 		chmodSocket:        conf.ChmodSocket,
@@ -113,32 +119,31 @@ func NewExporter(conf ChronyCollectorConfig, logger *slog.Logger) Exporter {
 func (e Exporter) Describe(ch chan<- *prometheus.Desc) {
 }
 
-func (e Exporter) dial() (net.Conn, error, func()) {
-	if strings.HasPrefix(e.address, "unix://") {
-		remote := strings.TrimPrefix(e.address, "unix://")
+func (e Exporter) dial() (net.Conn, func(), error) {
+	if remote, ok := strings.CutPrefix(e.address, "unix://"); ok {
 		base, _ := path.Split(remote)
-		local := path.Join(base, fmt.Sprintf("chrony_exporter.%d.sock", os.Getpid()))
+		local := path.Join(base, fmt.Sprintf("chrony_exporter.%s.sock", uuid.New()))
 		conn, err := net.DialUnix("unixgram",
 			&net.UnixAddr{Name: local, Net: "unixgram"},
 			&net.UnixAddr{Name: remote, Net: "unixgram"},
 		)
 		if err != nil {
-			return nil, err, func() { os.Remove(local) }
+			return nil, func() { os.Remove(local) }, err
 		}
 		if e.chmodSocket {
 			if err := os.Chmod(local, 0666); err != nil {
-				return nil, err, func() { conn.Close(); os.Remove(local) }
+				return nil, func() { conn.Close(); os.Remove(local) }, err
 			}
 		}
 		err = conn.SetReadDeadline(time.Now().Add(e.timeout))
 		if err != nil {
 			e.logger.Debug("Couldn't set read-timeout for unix datagram socket", "err", err)
 		}
-		return conn, nil, func() { conn.Close(); os.Remove(local) }
+		return conn, func() { conn.Close(); os.Remove(local) }, nil
 	}
 
 	conn, err := net.DialTimeout("udp", e.address, e.timeout)
-	return conn, err, func() {}
+	return conn, func() {}, err
 }
 
 // Collect implements prometheus.Collector.
@@ -151,7 +156,7 @@ func (e Exporter) Collect(ch chan<- prometheus.Metric) {
 		logger.Debug("Scrape completed", "seconds", time.Since(start).Seconds())
 		ch <- upMetric.mustNewConstMetric(up)
 	}()
-	conn, err, cleanup := e.dial()
+	conn, cleanup, err := e.dial()
 	defer cleanup()
 	if err != nil {
 		logger.Debug("Couldn't connect to chrony", "address", e.address, "err", err)
@@ -163,7 +168,7 @@ func (e Exporter) Collect(ch chan<- prometheus.Metric) {
 	client := chrony.Client{Sequence: 1, Connection: conn}
 
 	if e.collectSources {
-		err = e.getSourcesMetrics(logger, ch, client)
+		err = e.getSourcesMetrics(logger, ch, &client, e.collectNtpdata)
 		if err != nil {
 			logger.Debug("Couldn't get sources", "err", err)
 			up = 0
@@ -171,7 +176,7 @@ func (e Exporter) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	if e.collectTracking {
-		err = e.getTrackingMetrics(logger, ch, client)
+		err = e.getTrackingMetrics(logger, ch, &client)
 		if err != nil {
 			logger.Debug("Couldn't get tracking", "err", err)
 			up = 0
@@ -179,7 +184,7 @@ func (e Exporter) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	if e.collectServerstats {
-		err = e.getServerstatsMetrics(logger, ch, client)
+		err = e.getServerstatsMetrics(logger, ch, &client)
 		if err != nil {
 			logger.Debug("Couldn't get serverstats", "err", err)
 			up = 0

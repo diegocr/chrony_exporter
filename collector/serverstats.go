@@ -235,7 +235,7 @@ func parseServerStatsPacket(p chrony.ResponsePacket) (chrony.ReplyServerStats4, 
 	return serverStats, nil
 }
 
-func (e Exporter) getServerstatsMetrics(logger *slog.Logger, ch chan<- prometheus.Metric, client chrony.Client) error {
+func (e Exporter) getServerstatsMetrics(logger *slog.Logger, ch chan<- prometheus.Metric, client *chrony.Client) error {
 	packet, err := client.Communicate(chrony.NewServerStatsPacket())
 	if err != nil {
 		return err
@@ -244,7 +244,7 @@ func (e Exporter) getServerstatsMetrics(logger *slog.Logger, ch chan<- prometheu
 
 	serverstats, err := parseServerStatsPacket(packet)
 	if err != nil {
-		return fmt.Errorf("Unable to parse 'serverstats' packet: %w", err)
+		return fmt.Errorf("unable to parse 'serverstats' packet: %w", err)
 	}
 
 	// Stats that only exist in all versions.

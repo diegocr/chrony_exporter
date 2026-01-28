@@ -108,9 +108,59 @@ var (
 		),
 		prometheus.GaugeValue,
 	}
+
+	sourcesPeerOffset = typedDesc{
+		prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, sourcesSubsystem, "peer_offset_seconds"),
+			"Chrony sources peer offset",
+			[]string{"source_address", "source_name"},
+			nil,
+		),
+		prometheus.GaugeValue,
+	}
+
+	sourcesPeerDelay = typedDesc{
+		prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, sourcesSubsystem, "peer_delay_seconds"),
+			"Chrony sources peer delay",
+			[]string{"source_address", "source_name"},
+			nil,
+		),
+		prometheus.GaugeValue,
+	}
+
+	sourcesPeerDispersion = typedDesc{
+		prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, sourcesSubsystem, "peer_dispersion_seconds"),
+			"Chrony sources peer dispersion",
+			[]string{"source_address", "source_name"},
+			nil,
+		),
+		prometheus.GaugeValue,
+	}
+
+	sourcesPeerResponseTime = typedDesc{
+		prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, sourcesSubsystem, "peer_response_time_seconds"),
+			"Chrony sources peer response time",
+			[]string{"source_address", "source_name"},
+			nil,
+		),
+		prometheus.GaugeValue,
+	}
+
+	sourcesPeerJitterAsymmetry = typedDesc{
+		prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, sourcesSubsystem, "peer_jitter_asymmetry_seconds"),
+			"Chrony sources peer jitter asymmetry",
+			[]string{"source_address", "source_name"},
+			nil,
+		),
+		prometheus.GaugeValue,
+	}
 )
 
-func (e Exporter) getSourcesMetrics(logger *slog.Logger, ch chan<- prometheus.Metric, client chrony.Client) error {
+func (e Exporter) getSourcesMetrics(logger *slog.Logger, ch chan<- prometheus.Metric, client *chrony.Client, collectNtpdata bool) error {
 	packet, err := client.Communicate(chrony.NewSourcesPacket())
 	if err != nil {
 		return err
@@ -119,7 +169,7 @@ func (e Exporter) getSourcesMetrics(logger *slog.Logger, ch chan<- prometheus.Me
 
 	sources, ok := packet.(*chrony.ReplySources)
 	if !ok {
-		return fmt.Errorf("Got wrong 'sources' response: %q", packet)
+		return fmt.Errorf("got wrong 'sources' response: %q", packet)
 	}
 
 	results := make([]chrony.ReplySourceData, sources.NSources)
@@ -128,21 +178,27 @@ func (e Exporter) getSourcesMetrics(logger *slog.Logger, ch chan<- prometheus.Me
 		logger.Debug("Fetching source", "source_index", i)
 		packet, err = client.Communicate(chrony.NewSourceDataPacket(int32(i)))
 		if err != nil {
-			return fmt.Errorf("Failed to get sourcedata response: %d", i)
+			return fmt.Errorf("failed to get sourcedata response: %d", i)
 		}
 		sourceData, ok := packet.(*chrony.ReplySourceData)
 		if !ok {
-			return fmt.Errorf("Got wrong 'sourcedata' response: %q", packet)
+			return fmt.Errorf("got wrong 'sourcedata' response: %q", packet)
 		}
 		results[i] = *sourceData
 	}
 
 	for _, r := range results {
+		if r.IPAddr.Family == chrony.IPAddrID {
+			logger.Debug("Skipping unresolved IP address", "address", r.IPAddr.String())
+			continue
+		}
 		sourceAddress := r.IPAddr.String()
-		sourceName := e.dnsLookup(logger, r.IPAddr)
+		sourceName := e.dnsLookup(logger, r.IPAddr.ToNetIP())
 
-		if r.Mode == chrony.SourceModeRef && r.IPAddr.To4() != nil {
-			sourceName = chrony.RefidToString(binary.BigEndian.Uint32(r.IPAddr))
+		if r.Mode == chrony.SourceModeRef && r.IPAddr.ToNetIP().To4() != nil {
+			refid := chrony.RefidToString(binary.BigEndian.Uint32(r.IPAddr.ToNetIP().To4()))
+			sourceAddress = refid
+			sourceName = refid
 		}
 
 		// Compute the reachability from the Reachability bits.
@@ -157,6 +213,30 @@ func (e Exporter) getSourcesMetrics(logger *slog.Logger, ch chan<- prometheus.Me
 		ch <- sourcesPollInterval.mustNewConstMetric(math.Pow(2, float64(r.Poll)), sourceAddress, sourceName)
 		ch <- sourcesStateInfo.mustNewConstMetric(1.0, sourceAddress, sourceName, r.State.String(), r.Mode.String())
 		ch <- sourcesStratum.mustNewConstMetric(float64(r.Stratum), sourceAddress, sourceName)
+
+		// Skip NTP data collection for reference clocks as they don't have NTP protocol data
+		if collectNtpdata && r.Mode != chrony.SourceModeRef {
+			ntpDataPacket, err := client.Communicate(chrony.NewNTPDataPacket(r.IPAddr))
+			if err != nil {
+				return fmt.Errorf("failed to get ntpdata response for: %s", r.IPAddr)
+			}
+
+			var ntpData *chrony.NTPData
+			switch rpyNTPData := ntpDataPacket.(type) {
+			case *chrony.ReplyNTPData:
+				ntpData = &rpyNTPData.NTPData
+			case *chrony.ReplyNTPData2:
+				ntpData = &rpyNTPData.NTPData
+			default:
+				return fmt.Errorf("got wrong 'ntpdata' response: %q", packet)
+			}
+
+			ch <- sourcesPeerOffset.mustNewConstMetric(ntpData.Offset, sourceAddress, sourceName)
+			ch <- sourcesPeerDelay.mustNewConstMetric(ntpData.PeerDelay, sourceAddress, sourceName)
+			ch <- sourcesPeerResponseTime.mustNewConstMetric(ntpData.ResponseTime, sourceAddress, sourceName)
+			ch <- sourcesPeerDispersion.mustNewConstMetric(ntpData.PeerDispersion, sourceAddress, sourceName)
+			ch <- sourcesPeerJitterAsymmetry.mustNewConstMetric(ntpData.JitterAsymmetry, sourceAddress, sourceName)
+		}
 	}
 
 	return nil

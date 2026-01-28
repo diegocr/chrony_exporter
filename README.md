@@ -60,6 +60,8 @@ Flags:
       --chrony.timeout=5s        Timeout on requests to the Chrony srever.
       --[no-]collector.tracking  Collect tracking metrics
       --[no-]collector.sources   Collect sources metrics
+      --[no-]collector.sources.with-ntpdata  
+                                 Extend sources with ntpdata metrics (requires socket connection)
       --[no-]collector.serverstats  
                                  Collect serverstats metrics
       --[no-]collector.chmod-socket  
@@ -93,7 +95,7 @@ When the exporter is run as root the flag `collector.chmod-socket` is needed as 
 
 You can use [Prometheus rules](https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/) to pre-compute some values.
 
-For example, the maximum clock error can be computed from several metrics as [documented in the Chrony man pages](https://chrony-project.org/doc/4.4/chrony.conf.html).
+For example, an absolute bound on the clock accuracy can be computed from several metrics as [documented in the Chrony man pages](https://chrony-project.org/doc/4.6.1/chronyc.html).
 
 ```yaml
 groups:

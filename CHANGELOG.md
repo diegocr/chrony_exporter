@@ -1,5 +1,24 @@
 ## main / unreleased
 
+## 0.12.3 / 2026-01-27
+
+* [BUGFIX] Skip chrony IPADDR_ID sources #141
+* [BUGFIX] Fix reference clock source handling #142
+
+## 0.12.2 / 2025-10-01
+
+* [BUGFIX] Bump modules #131
+
+## 0.12.1 / 2025-06-03
+
+* [BUGFIX] Fix socket client filename #121
+* [BUGFIX] Fix collector.sources.with-ntpdata for chrony >= 4.6 #119)
+
+## 0.12.0 / 2025-03-02
+
+* [FEATURE] Optionally enhance "sources" information with NtpData response #106
+* [BUGFIX] Fix debug logging panic #108
+
 ## 0.11.0 / 2024-10-27
 
 * [CHANGE] Update logging to slog #95
